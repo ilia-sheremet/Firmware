@@ -1635,6 +1635,7 @@ Mavlink::task_main(int argc, char *argv[])
 		configure_stream("BATTERY_STATUS", 1.0f);
 		configure_stream("SYSTEM_TIME", 1.0f);
 		configure_stream("RC_CHANNELS", 5.0f);
+		configure_stream("POSITION_TO_BLADE", 5.0f);
 		break;
 
 	default:
