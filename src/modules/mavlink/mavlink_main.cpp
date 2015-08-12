@@ -1565,6 +1565,7 @@ Mavlink::task_main(int argc, char *argv[])
 
 	/* STATUSTEXT stream is like normal stream but gets messages from logbuffer instead of uORB */
 	configure_stream("STATUSTEXT", 20.0f);
+	//configure_stream("POSITION_TO_BLADE", 5.0f);
 
 	/* COMMAND_LONG stream: use high rate to avoid commands skipping */
 	configure_stream("COMMAND_LONG", 100.0f);
@@ -1602,6 +1603,7 @@ Mavlink::task_main(int argc, char *argv[])
 		configure_stream("ATTITUDE_TARGET", 3.0f);
 		configure_stream("DISTANCE_SENSOR", 0.5f);
 		configure_stream("OPTICAL_FLOW_RAD", 5.0f);
+		configure_stream("POSITION_TO_BLADE", 5.0f);
 		break;
 
 	case MAVLINK_MODE_ONBOARD:
@@ -1623,11 +1625,12 @@ Mavlink::task_main(int argc, char *argv[])
 		configure_stream("TIMESYNC", 10.0f);
 		configure_stream("ACTUATOR_CONTROL_TARGET0", 10.0f);
 		configure_stream("CAMERA_TRIGGER", 30.0f);
+		configure_stream("POSITION_TO_BLADE", 5.0f);
 		break;
 
 	case MAVLINK_MODE_OSD:
 		configure_stream("SYS_STATUS", 5.0f);
-		configure_stream("ATTITUDE", 25.0f);
+		configure_stream("ATTITUDE", 1.0f); //was 25.0f
 		configure_stream("VFR_HUD", 5.0f);
 		configure_stream("GPS_RAW_INT", 1.0f);
 		configure_stream("GLOBAL_POSITION_INT", 10.0f);
@@ -1635,6 +1638,7 @@ Mavlink::task_main(int argc, char *argv[])
 		configure_stream("BATTERY_STATUS", 1.0f);
 		configure_stream("SYSTEM_TIME", 1.0f);
 		configure_stream("RC_CHANNELS", 5.0f);
+		configure_stream("POSITION_TO_BLADE", 5.0f);
 		break;
 
 	default:

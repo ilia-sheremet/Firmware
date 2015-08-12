@@ -71,6 +71,7 @@
 #include <uORB/topics/navigation_capabilities.h>
 #include <uORB/topics/distance_sensor.h>
 #include <uORB/topics/camera_trigger.h>
+#include <uORB/topics/position_to_blade.h>
 #include <drivers/drv_rc_input.h>
 #include <drivers/drv_pwm_output.h>
 #include <systemlib/err.h>
@@ -2332,6 +2333,77 @@ protected:
 	}
 };
 
+class MavlinkPositionToBlade : public MavlinkStream
+{
+public:
+	const char *get_name() const
+	{
+		return MavlinkPositionToBlade::get_name_static();
+	}
+
+	static const char *get_name_static()
+	{
+		return "POSITION_TO_BLADE";
+	}
+
+	uint8_t get_id()
+	{
+		return MAVLINK_MSG_ID_POSITION_TO_BLADE;
+	}
+
+	static MavlinkStream *new_instance(Mavlink *mavlink)
+	{
+		return new MavlinkPositionToBlade(mavlink);
+	}
+
+	unsigned get_size()
+	{
+		return MAVLINK_MSG_ID_POSITION_TO_BLADE_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES;
+		//return _position_to_blade_sub->is_published() ? (MAVLINK_MSG_ID_POSITION_TO_BLADE_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES) : 0;   // check this version
+	}
+
+private:
+	MavlinkOrbSubscription *_position_to_blade_sub;
+	uint64_t _position_to_blade_time;
+
+	/* do not allow top copying this class */
+	MavlinkPositionToBlade(MavlinkPositionToBlade &);
+	MavlinkPositionToBlade& operator = (const MavlinkPositionToBlade &);
+
+protected:
+	explicit MavlinkPositionToBlade(Mavlink *mavlink) : MavlinkStream(mavlink),
+	_position_to_blade_sub(_mavlink->add_orb_subscription(ORB_ID(position_to_blade))),
+	_position_to_blade_time(0)
+	{}
+
+	void send(const hrt_abstime t)
+	{
+		//struct position_to_blade_s position;
+
+       // if (_position_to_blade_sub->update(&_position_to_blade_time, &position)) {
+			__mavlink_position_to_blade_t msg;
+
+			msg.distance_blade = 0;
+			msg.distance_pillar = 0;
+
+			msg.x_position = 10;
+
+			_mavlink->send_message(MAVLINK_MSG_ID_POSITION_TO_BLADE, &msg);
+	  // }
+
+//		__mavlink_position_to_blade_t msg;
+//
+//		uint8_t a = 50, b = 0;
+//
+//		a++;
+//		b++;
+//		msg.distance_blade = a;
+//		msg.distance_pillar = b;
+//		msg.x_position = 10;
+//
+//		_mavlink->send_message(MAVLINK_MSG_ID_POSITION_TO_BLADE, &msg);
+	}
+};
 
 const StreamListItem *streams_list[] = {
 	new StreamListItem(&MavlinkStreamHeartbeat::new_instance, &MavlinkStreamHeartbeat::get_name_static),
@@ -2367,5 +2439,6 @@ const StreamListItem *streams_list[] = {
 	new StreamListItem(&MavlinkStreamNamedValueFloat::new_instance, &MavlinkStreamNamedValueFloat::get_name_static),
 	new StreamListItem(&MavlinkStreamCameraCapture::new_instance, &MavlinkStreamCameraCapture::get_name_static),
 	new StreamListItem(&MavlinkStreamDistanceSensor::new_instance, &MavlinkStreamDistanceSensor::get_name_static),
+	new StreamListItem(&MavlinkPositionToBlade::new_instance, &MavlinkPositionToBlade::get_name_static),
 	nullptr
 };
