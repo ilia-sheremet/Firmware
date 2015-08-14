@@ -44,9 +44,9 @@
 #include <board_config.h>
 #include <drivers/drv_humidity.h>
 
-#define HTU21D_I2CADDR       0x40
+#define HTU21D_I2CADDR       0x40 // 0x40
 #define HTU21D_READTEMP      0xE3 //e3
-#define HTU21D_READHUM       0xE5
+#define HTU21D_READHUM       0xE5 //e5
 #define HTU21D_WRITEREG      0xE6
 #define HTU21D_READREG       0xE7
 #define HTU21D_RESET         0xFE
@@ -64,10 +64,8 @@ public:
 	virtual int 		init();
 	int					measure();
 	int                 get_humidity();
-	int                 get_temperature();
+	virtual int                 get_temperature();  // TODO check virtual - _retries
 
-//	virtual ssize_t		read(struct file *filp, char *buffer, size_t buflen) = 0;
-//	virtual int			ioctl(struct file *filp, int cmd, unsigned long arg) = 0;
 
 	/**
 	* Diagnostics - print some basic information about the driver.
@@ -318,6 +316,8 @@ HTU21D::get_temperature()
 	uint8_t cmd = HTU21D_READTEMP, crc = 0, val[3] = {0, 0, 0};
 	uint16_t tem = 0;
 
+	//_retries = 10;
+
 	ret = transfer(&cmd, 1, nullptr, 0);
 	if (OK != ret) {
 		errx(1, "get_temperature::OK != send");
@@ -326,7 +326,7 @@ HTU21D::get_temperature()
 		return ret;
 	}
 
-	usleep(10000); //TODO check how usleep func work
+	usleep(100000); //TODO check how usleep func work
 
 	ret = transfer(nullptr, 0, &val[0], 3);
 	if (OK != ret) {
@@ -416,6 +416,8 @@ start()
 	for (int i = 0; i < 100; i++){
 		usleep(10000); //TODO check how usleep func work
 		g_dev->get_temperature();
+		usleep(10000); //TODO check how usleep func work
+		g_dev->get_humidity();
 	}
 
 
