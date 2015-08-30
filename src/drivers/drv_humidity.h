@@ -18,7 +18,7 @@
 
 #define HTU21D_CONVERSION_INTERVAL 	100000 /* 60ms for one sonar */
 #define TICKS_BETWEEN_SUCCESIVE_FIRES 	100000 /* 30ms between each sonar measurement (watch out for interference!) */
-
+                                        // maybe try (1000000 / 10)	, 10 hz
 
 /* oddly, ERROR is not defined for c++ */
 #ifdef ERROR
