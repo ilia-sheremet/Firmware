@@ -184,6 +184,8 @@ HTU21D::init()
 	/* register alternate interfaces if we have to */
 	_class_instance = register_class_devname(HTU21D_DEVICE_PATH);
 
+	_cycling_rate = HTU21D_CONVERSION_INTERVAL; //TODO check is it a proper interval
+
 	/* publication init */
 	if (_class_instance == CLASS_DEVICE_PRIMARY) {
 
@@ -365,12 +367,11 @@ HTU21D::collect()
 	if (_humidity_pub != nullptr && !(_pub_blocked)) {
 		/* publish it */
 		orb_publish(ORB_ID(humidity), _humidity_pub, &report);
-
+		printf("\nHTU21D published successfully ...\n"); //DELETE
 	}
 
 	//TODO make a proper publishing continuance, check the examples
 
-	printf("\nHTU21D collection ends ...\n"); //DELETE
 	ret = OK;
 	return ret;
 }
@@ -457,6 +458,163 @@ HTU21D::stop()
 {
 	work_cancel(HPWORK, &_work);
 }
+
+int
+HTU21D::ioctl(struct file *filp, int cmd, unsigned long arg)
+{
+	switch (cmd) {
+
+	case SENSORIOCSPOLLRATE: {
+			switch (arg) {
+
+				/* switching to manual polling */
+			case SENSOR_POLLRATE_MANUAL:
+				stop();
+				_measure_ticks = 0;
+				return OK;
+
+				/* external signalling (DRDY) not supported */
+			case SENSOR_POLLRATE_EXTERNAL:
+
+				/* zero would be bad */
+			case 0:
+				return -EINVAL;
+
+				/* set default/max polling rate */
+			case SENSOR_POLLRATE_MAX:
+			case SENSOR_POLLRATE_DEFAULT: {
+					/* do we need to start internal polling? */
+					bool want_start = (_measure_ticks == 0);
+
+					/* set interval for next measurement to minimum legal value */
+					_measure_ticks = USEC2TICK(_cycling_rate);
+
+					/* if we need to start the poll state machine, do it */
+					if (want_start)
+						start();
+
+					return OK;
+				}
+
+				/* adjust to a legal polling interval in Hz */
+			default: {
+					/* do we need to start internal polling? */
+					bool want_start = (_measure_ticks == 0);
+
+					/* convert hz to tick interval via microseconds */
+					int ticks = USEC2TICK(1000000 / arg);
+
+					/* check against maximum rate */
+					if (ticks < USEC2TICK(_cycling_rate))
+						return -EINVAL;
+
+					/* update interval for next measurement */
+					_measure_ticks = ticks;
+
+					/* if we need to start the poll state machine, do it */
+					if (want_start)
+						start();
+
+					return OK;
+				}
+			}
+		}
+
+	case SENSORIOCGPOLLRATE:
+		if (_measure_ticks == 0)
+			return SENSOR_POLLRATE_MANUAL;
+
+		return (1000 / _measure_ticks);
+
+	case SENSORIOCSQUEUEDEPTH: {
+			/* lower bound is mandatory, upper bound is a sanity check */
+			if ((arg < 1) || (arg > 100))
+				return -EINVAL;
+
+			irqstate_t flags = irqsave();
+			if (!_reports->resize(arg)) {
+				irqrestore(flags);
+				return -ENOMEM;
+			}
+			irqrestore(flags);
+
+			return OK;
+		}
+
+	case SENSORIOCGQUEUEDEPTH:
+		return _reports->size();
+
+	case SENSORIOCRESET:
+		/* XXX implement this */
+		return -EINVAL;
+
+	default:
+		/* give it to the superclass */
+		return I2C::ioctl(filp, cmd, arg);
+	}
+}
+
+ssize_t
+HTU21D::read(struct file *filp, char *buffer, size_t buflen)
+{
+
+	unsigned count = buflen / sizeof(struct humidity_s);
+	struct humidity_s *hbuf = reinterpret_cast<struct humidity_s *>(buffer);
+	int ret = 0;
+
+	/* buffer must be large enough */
+	if (count < 1) {
+		return -ENOSPC;
+	}
+
+	/* if automatic measurement is enabled */
+	if (_measure_ticks > 0) {
+
+		/*
+		 * While there is space in the caller's buffer, and reports, copy them.
+		 * Note that we may be pre-empted by the workq thread while we are doing this;
+		 * we are careful to avoid racing with them.
+		 */
+		while (count--) {
+			if (_reports->get(hbuf)) {
+				ret += sizeof(*hbuf);
+				hbuf++;
+			}
+		}
+
+		/* if there was no data, warn the caller */
+		return ret ? ret : -EAGAIN;
+	}
+
+	/* manual measurement - run one conversion */
+	do {
+		_reports->flush();
+
+		/* trigger a measurement */
+		if (OK != measure()) {
+			ret = -EIO;
+			break;
+		}
+
+		/* wait for it to complete */
+		usleep(_cycling_rate * 2);
+
+		/* run the collection phase */
+		if (OK != collect()) {
+			ret = -EIO;
+			break;
+		}
+
+		/* state machine will have generated a report, copy it out */
+		if (_reports->get(hbuf)) {
+			ret = sizeof(*hbuf);
+		}
+
+	} while (0);
+
+	return ret;
+}
+
 
 /**
  * Local functions in support of the shell command.
