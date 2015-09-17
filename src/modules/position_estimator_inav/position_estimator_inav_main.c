@@ -248,8 +248,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	int baro_init_cnt = 0;
 	int baro_init_num = 200;
 	float baro_offset = 0.0f;		// baro offset for reference altitude, initialized on start, then adjusted
-	float surface_offset = 0.0f;	// ground level offset from reference altitude
-	float surface_offset_rate = 0.0f;	// surface offset change rate
 
 	hrt_abstime accel_timestamp = 0;
 	hrt_abstime baro_timestamp = 0;
@@ -291,7 +289,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	};
 
 	float corr_sonar = 0.0f;
-	float corr_sonar_filtered = 0.0f;
+	float sonar_filtered = 0.0f;
+	float sonar_corrected = 0.0f;
 
 	float corr_flow[] = { 0.0f, 0.0f };	// N E
 	float w_flow = 0.0f;
@@ -489,52 +488,45 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			if (updated) {
 				orb_copy(ORB_ID(optical_flow), optical_flow_sub, &flow);
 
-				/* calculate time from previous update */
-//				float flow_dt = flow_prev > 0 ? (flow.flow_timestamp - flow_prev) * 1e-6f : 0.1f;
-//				flow_prev = flow.flow_timestamp;
-
-				if ((flow.ground_distance_m > 0.31f) &&
-					(flow.ground_distance_m < 4.0f) &&
-					(PX4_R(att.R, 2, 2) > 0.7f) &&
-					(fabsf(flow.ground_distance_m - sonar_prev) > FLT_EPSILON)) {
-
+				/* if new reading is received */
+				if (fabsf(flow.ground_distance_m - sonar_prev) > FLT_EPSILON)
+				{
 					sonar_time = t;
 					sonar_prev = flow.ground_distance_m;
-					corr_sonar = flow.ground_distance_m + surface_offset + z_est[0];
-					corr_sonar_filtered += (corr_sonar - corr_sonar_filtered) * params.sonar_filt;
 
-					if (fabsf(corr_sonar) > params.sonar_err) {
-						/* correction is too large: spike or new ground level? */
-						if (fabsf(corr_sonar - corr_sonar_filtered) > params.sonar_err) {
-							/* spike detected, ignore */
-							corr_sonar = 0.0f;
-							sonar_valid = false;
+					sonar_filtered += (flow.ground_distance_m - sonar_filtered) * params.sonar_filt;
 
-						} else {
-							/* new ground level */
-							surface_offset -= corr_sonar;
-							surface_offset_rate = 0.0f;
-							corr_sonar = 0.0f;
-							corr_sonar_filtered = 0.0f;
-							sonar_valid_time = t;
+					if (sonar_filtered > 0.31f && sonar_filtered < 3.9f) /* vehicle is assumed to be inside sonar range */
+					{
+						if (PX4_R(att.R, 2, 2) > 0.7f) /* if tilt is not to big, we can assumed sonar reading is usable */
+						{
 							sonar_valid = true;
-							local_pos.surface_bottom_timestamp = t;
-							mavlink_log_info(mavlink_fd, "[inav] new surface level: %d", (int)surface_offset);
-						}
 
-					} else {
-						/* correction is ok, use it */
-						sonar_valid_time = t;
-						sonar_valid = true;
+							if (fabsf(flow.ground_distance_m - sonar_filtered) > params.sonar_err || flow.ground_distance_m < 0.31f || flow.ground_distance_m > 3.9f) {
+								/* spike detected, ignore reading, do not apply any correction (this will eventually time out if not recovered) */
+								corr_sonar = 0;
+							} else {
+								/* correction is ok, use it and mark it as current */
+								sonar_valid_time = t;
+								sonar_corrected = flow.ground_distance_m * PX4_R(att.R, 2, 2); /* corrected by pitch-roll */
+								corr_sonar = sonar_corrected + z_est[0];
+							}
+						}
+						/* else, dont touch correction, which will be only be usable for some time */
+					}
+					else {
+						/* sonar is outside of usable range to trust it */
+						corr_sonar = 0.0f;
+						sonar_valid = false;
 					}
 				}
 
 				float flow_q = flow.quality / 255.0f;
-				float dist_bottom = - z_est[0] - surface_offset;
+				float dist_bottom = -z_est[0]/*sonar_corrected*/; /* should be probably the latter, but I'm not getting great results */
 
-				if (dist_bottom > 0.3f && flow_q > params.flow_q_min && (t < sonar_valid_time + sonar_valid_timeout) && PX4_R(att.R, 2, 2) > 0.7f) {
+				if (sonar_prev > 0.31f && sonar_prev < 3.9f && flow_q > params.flow_q_min && (t < sonar_valid_time + sonar_valid_timeout) && PX4_R(att.R, 2, 2) > 0.7f) {
 					/* distance to surface */
-					float flow_dist = dist_bottom / PX4_R(att.R, 2, 2);
+					float flow_dist = dist_bottom;
 					/* check if flow if too large for accurate measurements */
 					/* calculate estimated velocity in body frame */
 					float body_v_est[2] = { 0.0f, 0.0f };
@@ -833,8 +825,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 		/* check for sonar measurement timeout */
 		if (sonar_valid && (t > (sonar_time + sonar_timeout))) {
-			corr_sonar = 0.0f;
-			sonar_valid = false;
+			/*corr_sonar = 0.0f;
+			sonar_valid = false;*/ /* this is probably not needed anymore since sonar_valid_timeout is mainly used */
 		}
 
 		float dt = t_prev > 0 ? (t - t_prev) / 1000000.0f : 0.0f;
@@ -848,7 +840,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		if (epv < max_eph_epv) {
 			epv += 0.005f * dt;	// add 1m to EPV each 200s (baro drift)
 		}
-
 		/* use GPS if it's valid and reference position initialized */
 		bool use_gps_xy = ref_inited && gps_valid && params.w_xy_gps_p > MIN_VALID_W;
 		bool use_gps_z = ref_inited && gps_valid && params.w_z_gps_p > MIN_VALID_W;
@@ -857,21 +848,9 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		bool use_vision_z = vision_valid && params.w_z_vision_p > MIN_VALID_W;
 		/* use flow if it's valid and (accurate or no GPS available) */
 		bool use_flow = flow_valid && (flow_accurate || !use_gps_xy);
-
 		bool can_estimate_xy = (eph < max_eph_epv) || use_gps_xy || use_flow || use_vision_xy;
-
+		bool use_sonar = sonar_valid && params.w_z_sonar > MIN_VALID_W && (t < sonar_valid_time + sonar_valid_timeout);
 		bool dist_bottom_valid = (t < sonar_valid_time + sonar_valid_timeout);
-
-		if (dist_bottom_valid) {
-			/* surface distance prediction */
-			surface_offset += surface_offset_rate * dt;
-
-			/* surface distance correction */
-			if (sonar_valid) {
-				surface_offset_rate -= corr_sonar * 0.5f * params.w_z_sonar * params.w_z_sonar * dt;
-				surface_offset -= corr_sonar * params.w_z_sonar * dt;
-			}
-		}
 
 		float w_xy_gps_p = params.w_xy_gps_p * w_gps_xy;
 		float w_xy_gps_v = params.w_xy_gps_v * w_gps_xy;
@@ -978,15 +957,24 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 
 		/* inertial filter prediction for altitude */
-		inertial_filter_predict(dt, z_est, acc[2]);
+		/* disabled: not getting great results with this, although maybe it is due to bad acc bias getting trashed by flow-based correction above */
+		/*inertial_filter_predict(dt, z_est, acc[2]);
 
 		if (!(isfinite(z_est[0]) && isfinite(z_est[1]))) {
 			write_debug_log("BAD ESTIMATE AFTER Z PREDICTION", dt, x_est, y_est, z_est, x_est_prev, y_est_prev, z_est_prev, acc, corr_gps, w_xy_gps_p, w_xy_gps_v);
 			memcpy(z_est, z_est_prev, sizeof(z_est));
-		}
+		}*/
 
 		/* inertial filter correction for altitude */
-		inertial_filter_correct(corr_baro, dt, z_est, 0, params.w_z_baro);
+		if (use_sonar) { /* when sonar is usable, prefer sonar */
+			inertial_filter_correct(-corr_sonar, dt, z_est, 0, params.w_z_sonar);
+			//baro_offset += -(corr_baro + corr_sonar); // continously update baro_offset to match corr_baro to corr_sonar,
+																							 // this avoids discrepancy when going from sonar range to baro range
+			/* not enabled yet, not sure if it works or makes sense */
+		}
+		else {
+			inertial_filter_correct(corr_baro, dt, z_est, 0, params.w_z_baro);
+		}
 
 		if (use_gps_z) {
 			epv = fminf(epv, gps.epv);
@@ -1128,8 +1116,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			local_pos.epv = epv;
 
 			if (local_pos.dist_bottom_valid) {
-				local_pos.dist_bottom = -z_est[0] - surface_offset;
-				local_pos.dist_bottom_rate = -z_est[1] - surface_offset_rate;
+				local_pos.dist_bottom = sonar_corrected; /* this is only for log analysis */
+				local_pos.dist_bottom_rate = sonar_prev; /* idem */
 			}
 
 			local_pos.timestamp = t;
