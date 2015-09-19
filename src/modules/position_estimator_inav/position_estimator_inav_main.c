@@ -936,10 +936,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		accel_bias_corr[1] = 0.0f;
 		accel_bias_corr[2] = 0.0f;
 
-		/*if (use_flow) {
+		if (use_flow) {
 			accel_bias_corr[0] -= corr_flow[0] * params.w_xy_flow;
 			accel_bias_corr[1] -= corr_flow[1] * params.w_xy_flow;
-		}*/
+		}
 
 		if (use_sonar)
 			accel_bias_corr[2] -= corr_sonar * params.w_z_sonar * params.w_z_sonar;
@@ -960,7 +960,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 
 		/* inertial filter prediction for altitude */
-		/* disabled: not getting great results with this, although maybe it is due to bad acc bias getting trashed by flow-based correction above */
 		inertial_filter_predict(dt, z_est, acc[2]);
 
 		if (!(isfinite(z_est[0]) && isfinite(z_est[1]))) {
