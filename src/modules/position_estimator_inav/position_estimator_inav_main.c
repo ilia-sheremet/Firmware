@@ -942,7 +942,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 
 		if (use_sonar)
-			accel_bias_corr[2] -= corr_sonar * params.w_z_sonar * params.w_z_sonar;
+			accel_bias_corr[2] -= -corr_sonar * params.w_z_sonar * params.w_z_sonar;
 		else
 			accel_bias_corr[2] -= corr_baro * params.w_z_baro * params.w_z_baro;
 
