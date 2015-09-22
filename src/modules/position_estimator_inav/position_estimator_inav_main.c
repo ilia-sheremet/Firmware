@@ -522,11 +522,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				}
 
 				float flow_q = flow.quality / 255.0f;
-				float dist_bottom = -z_est[0]/*sonar_corrected*/; /* should be probably the latter, but I'm not getting great results */
 
 				if (sonar_prev > 0.31f && sonar_prev < 3.9f && flow_q > params.flow_q_min && (t < sonar_valid_time + sonar_valid_timeout) && PX4_R(att.R, 2, 2) > 0.7f) {
 					/* distance to surface */
-					float flow_dist = dist_bottom;
+					float flow_dist = -z_est[0] / PX4_R(att.R, 2, 2);
 					/* check if flow if too large for accurate measurements */
 					/* calculate estimated velocity in body frame */
 					float body_v_est[2] = { 0.0f, 0.0f };
@@ -970,9 +969,6 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		/* inertial filter correction for altitude */
 		if (use_sonar) { /* when sonar is usable, prefer sonar */
 			inertial_filter_correct(-corr_sonar, dt, z_est, 0, params.w_z_sonar);
-			//baro_offset += -(corr_baro + corr_sonar); // continously update baro_offset to match corr_baro to corr_sonar,
-																							 // this avoids discrepancy when going from sonar range to baro range
-			/* not enabled yet, not sure if it works or makes sense */
 		}
 		else {
 			inertial_filter_correct(corr_baro, dt, z_est, 0, params.w_z_baro);
