@@ -248,6 +248,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	int baro_init_cnt = 0;
 	int baro_init_num = 200;
 	float baro_offset = 0.0f;		// baro offset for reference altitude, initialized on start, then adjusted
+	float baro_filtered = 0.0f;
 
 	hrt_abstime accel_timestamp = 0;
 	hrt_abstime baro_timestamp = 0;
@@ -476,6 +477,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 				}
 
 				if (sensor.baro_timestamp != baro_timestamp) {
+					baro_filtered += (sensor.baro_alt_meter - baro_filtered) * params.w_z_baro; // TODO: this should actually be a filter cutoff
 					corr_baro = baro_offset - sensor.baro_alt_meter - z_est[0];
 					baro_timestamp = sensor.baro_timestamp;
 					baro_updates++;
@@ -848,7 +850,10 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		/* use flow if it's valid and (accurate or no GPS available) */
 		bool use_flow = flow_valid && (flow_accurate || !use_gps_xy);
 		bool can_estimate_xy = (eph < max_eph_epv) || use_gps_xy || use_flow || use_vision_xy;
-		bool use_sonar = sonar_valid && params.w_z_sonar > MIN_VALID_W && (t < sonar_valid_time + sonar_valid_timeout);
+		bool use_sonar = sonar_valid && params.w_z_sonar > MIN_VALID_W && (t < sonar_valid_time + sonar_valid_timeout) &&
+										 sonar_corrected > 0.31f && sonar_corrected < 3.5f; /* sonar_valid is necessary but not sufficient condition,
+																																					here we check that last estimate is not too old and current
+																																					reading (which should not be a spike) is within range */
 		bool dist_bottom_valid = (t < sonar_valid_time + sonar_valid_timeout);
 
 		float w_xy_gps_p = params.w_xy_gps_p * w_gps_xy;
@@ -969,6 +974,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		/* inertial filter correction for altitude */
 		if (use_sonar) { /* when sonar is usable, prefer sonar */
 			inertial_filter_correct(-corr_sonar, dt, z_est, 0, params.w_z_sonar);
+			baro_offset = baro_filtered - sonar_corrected; /* update baro offset to follow sonar's estimate */
 		}
 		else {
 			inertial_filter_correct(corr_baro, dt, z_est, 0, params.w_z_baro);
