@@ -66,6 +66,7 @@
 #include <uORB/topics/vision_position_estimate.h>
 #include <uORB/topics/home_position.h>
 #include <uORB/topics/optical_flow.h>
+#include <uORB/topics/range_finder.h>
 #include <mavlink/mavlink_log.h>
 #include <poll.h>
 #include <systemlib/err.h>
@@ -324,6 +325,8 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	memset(&local_pos, 0, sizeof(local_pos));
 	struct optical_flow_s flow;
 	memset(&flow, 0, sizeof(flow));
+	struct range_finder_s sonar;
+	memset (&sonar, 0, sizeof(sonar));
 	struct vision_position_estimate_s vision;
 	memset(&vision, 0, sizeof(vision));
 	struct vehicle_global_position_s global_pos;
@@ -336,6 +339,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 	int sensor_combined_sub = orb_subscribe(ORB_ID(sensor_combined));
 	int vehicle_attitude_sub = orb_subscribe(ORB_ID(vehicle_attitude));
 	int optical_flow_sub = orb_subscribe(ORB_ID(optical_flow));
+	int sonar_range_sub = orb_subscribe(ORB_ID(range_finder));
 	int vehicle_gps_position_sub = orb_subscribe(ORB_ID(vehicle_gps_position));
 	int vision_position_estimate_sub = orb_subscribe(ORB_ID(vision_position_estimate));
 	int home_position_sub = orb_subscribe(ORB_ID(home_position));
@@ -585,6 +589,48 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 				flow_updates++;
 			}
+
+			/* sonar range finder */
+		    orb_check(sonar_range_sub, &updated);
+
+		    //warnx("if (updated) ...\n"); //DELETE
+
+		    if (updated) {
+				orb_copy(ORB_ID(range_finder), sonar_range_sub, &sonar);
+				warnx("sonar.distance = %1.3f\n", (double)sonar.distance); //DELETE
+				/* if new reading is received */
+				if (fabsf(sonar.distance - sonar_prev) > FLT_EPSILON)
+				{
+					sonar_time = t;
+					sonar_prev = sonar.distance;
+
+					sonar_filtered += (sonar.distance - sonar_filtered) * params.sonar_filt;
+
+					if (sonar_filtered > 0.31f && sonar_filtered < 3.9f) /* vehicle is assumed to be inside sonar range */
+					{
+						if (PX4_R(att.R, 2, 2) > 0.7f) /* if tilt is not to big, we can assumed sonar reading is usable */
+						{
+							sonar_valid = true;
+
+							if (fabsf(sonar.distance - sonar_filtered) > params.sonar_err || sonar.distance < 0.31f || sonar.distance > 3.9f) {
+								/* spike detected, ignore reading, do not apply any correction (this will eventually time out if not recovered) */
+								corr_sonar = 0;
+							} else {
+								/* correction is ok, use it and mark it as current */
+								sonar_valid_time = t;
+								sonar_corrected = sonar.distance * PX4_R(att.R, 2, 2); /* corrected by pitch-roll */
+								corr_sonar = sonar_corrected + z_est[0];
+							}
+						}
+						/* else, dont touch correction, which will be only be usable for some time */
+					}
+					else {
+						/* sonar is outside of usable range to trust it */
+						corr_sonar = 0.0f;
+						sonar_valid = false;
+					}
+				}
+		    }
 
 			/* home position */
 			orb_check(home_position_sub, &updated);
@@ -851,10 +897,13 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		bool use_flow = flow_valid && (flow_accurate || !use_gps_xy);
 		bool can_estimate_xy = (eph < max_eph_epv) || use_gps_xy || use_flow || use_vision_xy;
 		bool use_sonar = sonar_valid && params.w_z_sonar > MIN_VALID_W && (t < sonar_valid_time + sonar_valid_timeout) &&
-										 sonar_corrected > 0.31f && sonar_corrected < 3.5f; /* sonar_valid is necessary but not sufficient condition,
-																																					here we check that last estimate is not too old and current
-																																					reading (which should not be a spike) is within range */
-		bool dist_bottom_valid = (t < sonar_valid_time + sonar_valid_timeout);
+										 sonar_corrected > 0.31f && sonar_corrected < 3.5f;
+
+		/* sonar_valid is necessary but not sufficient condition,
+	    here we check that last estimate is not too old and current
+		reading (which should not be a spike) is within range */
+
+		bool dist_bottom_valid = true; //(t < sonar_valid_time + sonar_valid_timeout);
 
 		float w_xy_gps_p = params.w_xy_gps_p * w_gps_xy;
 		float w_xy_gps_v = params.w_xy_gps_v * w_gps_xy;
