@@ -261,6 +261,7 @@ MEASAirspeed::collect()
 
 	ret = OK;
 
+
 	perf_end(_sample_perf);
 
 	return ret;

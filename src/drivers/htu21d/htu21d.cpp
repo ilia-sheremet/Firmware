@@ -5,8 +5,6 @@
  *      Author: postal
  */
 
-// write a publisher in collect function (maybe join hum and temp meaurement)?
-
 //TODO check all the headers
 #include <px4_config.h>
 
@@ -140,7 +138,7 @@ HTU21D::HTU21D(int bus, int address) :
 	_index_counter(0) 	/* initialising temp sonar i2c address to zero */
 
 {
-	printf("\n\nHTU21D constructor starts ...\n\n"); //DELETE
+	//printf("\n\nHTU21D constructor starts ...\n\n"); //DELETE
 
 	/* enable debug() calls */
 	_debug_enabled = false;
@@ -163,7 +161,7 @@ HTU21D::~HTU21D()
 int
 HTU21D::init()
 {
-	printf("\nHTU21D Initialization starts ...\n"); //DELETE
+	//printf("\nHTU21D Initialization starts ...\n"); //DELETE
 
 	int ret = ERROR;
 
@@ -211,7 +209,7 @@ HTU21D::init()
 int
 HTU21D::reset()
 {
-	printf("\nReseting HTU21D ...\n"); //DELETE
+	//printf("\nReseting HTU21D ...\n"); //DELETE
 
 	int ret;
 	uint8_t test = 0;
@@ -232,7 +230,7 @@ HTU21D::reset()
 		return ret;
 	}
 
-	usleep(25000);
+	usleep(5000);
 
 	ret = transfer(nullptr, 0, &test, 1);
 
@@ -283,7 +281,7 @@ HTU21D::get_humidity()
 
     // Following constants are taken from the htu21d datasheet
     _humidity = (hum * 125) / 65536 - 6;
-    warnx("Humidity = %f", _humidity); //DELETE
+    //warnx("Humidity = %f", _humidity); //DELETE
 
 	return ret;
 }
@@ -321,7 +319,7 @@ HTU21D::get_temperature()
 
     // Following constants are taken from the htu21d datasheet
     _temperature = (tem * 175.72) / 65536 - 46.85;
-    warnx("Temperature = %f", _temperature); //DELETE
+    //warnx("Temperature = %f", _temperature); //DELETE
 
 	return ret;
 }
@@ -348,7 +346,7 @@ int
 HTU21D::collect()
 {
 	int ret = ERROR;
-	printf("\nHTU21D collection starts ...\n"); //DELETE
+	//printf("\nHTU21D collection starts ...\n"); //DELETE
 
 	if (get_humidity() != OK) {
 			errx(1, "get_humidity() != OK");
@@ -367,7 +365,7 @@ HTU21D::collect()
 	if (_humidity_pub != nullptr && !(_pub_blocked)) {
 		/* publish it */
 		orb_publish(ORB_ID(humidity), _humidity_pub, &report);
-		printf("\nHTU21D published successfully ...\n"); //DELETE
+		//printf("\nHTU21D published successfully ...\n"); //DELETE
 	}
 
 	//TODO make a proper publishing continuance, check the examples
@@ -597,7 +595,7 @@ HTU21D::read(struct file *filp, char *buffer, size_t buflen)
 		}
 
 		/* wait for it to complete */
-		usleep(_cycling_rate * 2);
+		//usleep(_cycling_rate);       work witout it
 
 		/* run the collection phase */
 		if (OK != collect()) {
