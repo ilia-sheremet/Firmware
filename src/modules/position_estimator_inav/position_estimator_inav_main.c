@@ -90,7 +90,7 @@ static bool verbose_mode = false;
 static const hrt_abstime vision_topic_timeout = 500000;	// Vision topic timeout = 0.5s
 static const hrt_abstime gps_topic_timeout = 500000;		// GPS topic timeout = 0.5s
 static const hrt_abstime flow_topic_timeout = 1000000;	// optical flow topic timeout = 1s
-static const hrt_abstime sonar_timeout = 150000;	// sonar timeout = 150ms
+static const hrt_abstime sonar_timeout = 1000000;	// sonar timeout = 150ms --------------- was 150000
 static const hrt_abstime sonar_valid_timeout = 1000000;	// estimate sonar distance during this time after sonar loss
 static const hrt_abstime xy_src_timeout = 2000000;	// estimate position during this time after position sources loss
 static const uint32_t updates_counter_len = 1000000;
@@ -593,14 +593,12 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 			/* sonar range finder */
 		    orb_check(sonar_range_sub, &updated);
 
-		    //warnx("if (updated) ...\n"); //DELETE
-
 		    if (updated) {
 				orb_copy(ORB_ID(range_finder), sonar_range_sub, &sonar);
-				warnx("sonar.distance = %1.3f\n", (double)sonar.distance); //DELETE
+				//warnx("updated! sonar.distance = %1.2f, timestamp = %1.2f", (double)sonar.distance, (double)sonar.timestamp); //DELETE
 				/* if new reading is received */
-				if (fabsf(sonar.distance - sonar_prev) > FLT_EPSILON)
-				{
+//				if (fabsf(sonar.distance - sonar_prev) > FLT_EPSILON)
+//				{
 					sonar_time = t;
 					sonar_prev = sonar.distance;
 
@@ -611,6 +609,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						if (PX4_R(att.R, 2, 2) > 0.7f) /* if tilt is not to big, we can assumed sonar reading is usable */
 						{
 							sonar_valid = true;
+							//warnx("Data is valid, distance = %1.2f ...", (double)sonar.distance); //DELETE
 
 							if (fabsf(sonar.distance - sonar_filtered) > params.sonar_err || sonar.distance < 0.31f || sonar.distance > 3.9f) {
 								/* spike detected, ignore reading, do not apply any correction (this will eventually time out if not recovered) */
@@ -628,8 +627,9 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 						/* sonar is outside of usable range to trust it */
 						corr_sonar = 0.0f;
 						sonar_valid = false;
+						//warnx("NOT valid, distance = %1.2f ...\n", (double)sonar.distance); //DELETE
 					}
-				}
+				//}
 		    }
 
 			/* home position */
@@ -662,7 +662,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 					local_pos.ref_timestamp = home.timestamp;
 
 					if (ref_inited) {
-						/* reproject position estimate with new reference */
+						/* reproject position estimate with new//warnx("Sonar is updated ...\n"); //DELETE reference */
 						map_projection_project(&ref, est_lat, est_lon, &x_est[0], &y_est[0]);
 						z_est[0] = -(est_alt - local_pos.ref_alt);
 					}
@@ -849,12 +849,12 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		}
 
 		/* check for timeout on FLOW topic */
-		if ((flow_valid || sonar_valid) && t > flow.timestamp + flow_topic_timeout) {
-			flow_valid = false;
-			sonar_valid = false;
-			warnx("FLOW timeout");
-			mavlink_log_info(mavlink_fd, "[inav] FLOW timeout");
-		}
+//		if ((flow_valid || sonar_valid) && t > flow.timestamp + flow_topic_timeout) {
+//			flow_valid = false;
+//			sonar_valid = false;
+//			warnx("FLOW timeout");
+//			mavlink_log_info(mavlink_fd, "[inav] FLOW timeout");
+//		}
 
 		/* check for timeout on GPS topic */
 		if (gps_valid && (t > (gps.timestamp_position + gps_topic_timeout))) {
@@ -872,6 +872,7 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 
 		/* check for sonar measurement timeout */
 		if (sonar_valid && (t > (sonar_time + sonar_timeout))) {
+			//warnx("sonar_valid && (t > (sonar_time + sonar_timeout)");
 			/*corr_sonar = 0.0f;
 			sonar_valid = false;*/ /* this is probably not needed anymore since sonar_valid_timeout is mainly used */
 		}
@@ -899,11 +900,26 @@ int position_estimator_inav_thread_main(int argc, char *argv[])
 		bool use_sonar = sonar_valid && params.w_z_sonar > MIN_VALID_W && (t < sonar_valid_time + sonar_valid_timeout) &&
 										 sonar_corrected > 0.31f && sonar_corrected < 3.5f;
 
+
+
+//		if (t < sonar_valid_time + sonar_valid_timeout)                 //DELETE
+//			warnx("(t < sonar_valid_time + sonar_valid_timeout)");
+//
+//		if (sonar_corrected > 0.31f && sonar_corrected < 3.5f)          //DELETE
+//			warnx("sonar_corrected > 0.31f && sonar_corrected < 3.5f");
+
+//		if (use_sonar)
+//			warnx("USE SONAR TRUE, sonar.distance = %1.2f, sonar_corrected = %1.2f", (double)sonar.distance, (double)sonar_corrected); //DELETE
+//		else
+//			warnx("SONAR DATA FALSE, sonar.distance = %1.2f, sonar_corrected = %1.2f", (double)sonar.distance, (double)sonar_corrected); //DELETE
+
+
+
 		/* sonar_valid is necessary but not sufficient condition,
 	    here we check that last estimate is not too old and current
 		reading (which should not be a spike) is within range */
 
-		bool dist_bottom_valid = true; //(t < sonar_valid_time + sonar_valid_timeout);
+		bool dist_bottom_valid = (t < sonar_valid_time + sonar_valid_timeout); //(t < sonar_valid_time + sonar_valid_timeout);
 
 		float w_xy_gps_p = params.w_xy_gps_p * w_gps_xy;
 		float w_xy_gps_v = params.w_xy_gps_v * w_gps_xy;
