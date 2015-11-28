@@ -1,8 +1,8 @@
 /*
- * drv_humidity.h
+ * @file htdu21d.cpp
+ * @author Illia Sheremet "illia.sheremet@gmail.com"
  *
- *  Created on: Jul 9, 2015
- *      Author: postal
+ * Driver for humidity and temperature sensors connected via I2C.
  */
 
 #ifndef DRV_HUMIDITY_H_
@@ -21,6 +21,5 @@ struct hum_report {
 	uint64_t error_count;
 	float				_humidity;
 };
-
 
 #endif /* DRV_HUMIDITY_H_ */

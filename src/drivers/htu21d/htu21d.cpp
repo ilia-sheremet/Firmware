@@ -1,11 +1,10 @@
-/*
- * htdu21d.cpp
+/**
+ * @file htdu21d.cpp
+ * @author Illia Sheremet "illia.sheremet@gmail.com"
  *
- *  Created on: Jul 9, 2015
- *      Author: postal
+ * Driver for the MS HTU21d humidity and temperature sensors connected via I2C.
  */
 
-//TODO check all the headers
 #include <nuttx/config.h>
 
 #include <drivers/device/i2c.h>
@@ -35,7 +34,6 @@
 #include <drivers/device/ringbuffer.h>
 
 #include <uORB/uORB.h>
-#include <uORB/topics/subsystem_info.h>
 #include <uORB/topics/humidity.h>
 
 #include <board_config.h>
@@ -73,9 +71,9 @@ public:
 	virtual ~HTU21D();
 
 	virtual int 		init();
-	int                 reset();
+	int                 probe();
 	int                 get_humidity();
-	virtual int         get_temperature();  // TODO check virtual - _retries
+	int                 get_temperature();
 
 	virtual ssize_t		read(struct file *filp, char *buffer, size_t buflen);
 	virtual int			ioctl(struct file *filp, int cmd, unsigned long arg);
@@ -101,7 +99,6 @@ private:
 	int					    _measure_ticks;
 	bool				    _collect_phase;
 	int				        _class_instance;
-	int				        _orb_class_instance;
 	RingBuffer	*_reports;
 
 	struct humidity_s report;
@@ -110,10 +107,6 @@ private:
 	perf_counter_t		_sample_perf;
 	perf_counter_t		_comms_errors;
 	perf_counter_t		_buffer_overflows;
-
-	uint8_t				_cycle_counter;	/* counter in cycle to change i2c adresses */
-	int					_cycling_rate;	/* */
-	uint8_t				_index_counter;	/* temporary sonar i2c address */
 
 	int					collect();
 	int                 measure();
@@ -135,17 +128,15 @@ HTU21D::HTU21D(int bus, int address) :
 	_measure_ticks(0),
 	_collect_phase(false),
 	_class_instance(-1),
-	_orb_class_instance(-1),
-	_sample_perf(perf_alloc(PC_ELAPSED, "mb12xx_read")),
-	_comms_errors(perf_alloc(PC_COUNT, "mb12xx_comms_errors")),
-	_buffer_overflows(perf_alloc(PC_COUNT, "mb12xx_buffer_overflows")),
-	_cycle_counter(0),	/* initialising counter for cycling function to zero */
-	_cycling_rate(0),	/* initialising cycling rate (which can differ depending on one sonar or multiple) */
-	_index_counter(0) 	/* initialising temp sonar i2c address to zero */
+	_sample_perf(perf_alloc(PC_ELAPSED, "htu21d_read")),
+	_comms_errors(perf_alloc(PC_COUNT, "htu21d_comms_errors")),
+	_buffer_overflows(perf_alloc(PC_COUNT, "htu21d_buffer_overflows")),
+	_humidity(0),
+	_temperature(0),
+	_reports(nullptr),
+	_humidity_pub(-1)
 
 {
-	//printf("\n\nHTU21D constructor starts ...\n\n"); //DELETE
-
 	/* enable debug() calls */
 	_debug_enabled = false;
 
@@ -156,7 +147,7 @@ HTU21D::HTU21D(int bus, int address) :
 HTU21D::~HTU21D()
 {
 	/* make sure we are truly inactive */
-	//stop();              // TODO check the func()
+	stop();
 
 	/* free perf counters */
 	perf_free(_sample_perf);
@@ -167,11 +158,9 @@ HTU21D::~HTU21D()
 int
 HTU21D::init()
 {
-	//printf("\nHTU21D Initialization starts ...\n"); //DELETE
-
 	int ret = ERROR;
 
-	/* do I2C init (and probe) first */
+	/* do I2C init first */
 	if (I2C::init() != OK) {
 		errx(1, "init::I2C::init() != OK");
 		return ret;
@@ -188,8 +177,6 @@ HTU21D::init()
 	/* register alternate interfaces if we have to */
 	_class_instance = register_class_devname(HTU21D_DEVICE_PATH);
 
-	_cycling_rate = HTU21D_CONVERSION_INTERVAL; //TODO check is it a proper interval
-
 	/* publication init */
 	if (_class_instance == CLASS_DEVICE_PRIMARY) {
 
@@ -201,31 +188,26 @@ HTU21D::init()
 		/* measurement will have generated a report, publish */
 		_humidity_pub = orb_advertise(ORB_ID(humidity), &arp);
 
-		//if (_humidity_pub == nullptr)
-			//warnx("uORB started?");
+		if (_humidity_pub < 0)
+			warnx("uORB started?");
 	}
 
 	ret = OK;
-	/* sensor is ok, but we don't really know if it is within range */
+
 	_sensor_ok = true;
 
 	return ret;
 }
 
 int
-HTU21D::reset()
+HTU21D::probe()
 {
-	//printf("\nReseting HTU21D ...\n"); //DELETE
-
 	int ret;
-	uint8_t test = 0;
-	//printf("\nTest value before= %hhu\n", &test); //DELETE
-	warnx("Test value before = %u", test); //DELETE
+	uint8_t probe_value = 0;
 
 	/*
-	 * Send the command to begin a measurement.
+	 * Send the command to read from the sensor.
 	 */
-
 	uint8_t cmd = HTU21D_READREG;
 
 	ret = transfer(&cmd, 1, nullptr, 0);
@@ -238,21 +220,26 @@ HTU21D::reset()
 
 	usleep(5000);
 
-	ret = transfer(nullptr, 0, &test, 1);
-
-	debug("My ransfer returned %d", ret);
+	ret = transfer(nullptr, 0, &probe_value, 1);
 	if (OK != ret) {
 		errx(1, "measure::OK != ret on return");
 		perf_count(_comms_errors);
-		//debug("i2c::transfer returned %u", ret);
 		return ret;
 	}
 
-	//printf("\nTest value = %hhu\n", &test); //DELETE
-	warnx("Test value after = %u", test); //DELETE
+	//TODO probe_value sometimes not equal to 2, check why
+//	if (probe_value == 2)
+//	{
+//		ret = OK;
+//		warnx("Success!");
+//	}
+//	else
+//	{
+//		warnx("Sensor is not connected");
+//		errx(1, "probe_value !== 2");
+//	}
 
 	ret = OK;
-
 	return ret;
 }
 
@@ -271,7 +258,7 @@ HTU21D::get_humidity()
 		return ret;
 	}
 
-	usleep(5000); //TODO check how usleep func work
+	usleep(5000);
 
 	ret = transfer(nullptr, 0, &val[0], 3);
 	if (OK != ret) {
@@ -281,13 +268,13 @@ HTU21D::get_humidity()
 		return ret;
 	}
 
-    hum = (val[0] << 8) + val[1];	//TODO check the expression
+    hum = (val[0] << 8) + val[1];
     crc = val[2];
     debug("i2c::transfer returned %d", crc); //DELETE
 
     // Following constants are taken from the htu21d datasheet
     _humidity = (hum * 125) / 65536 - 6;
-    //warnx("Humidity = %f", _humidity); //DELETE
+    //warnx("Humidity = %f", _humidity); //DELETE dubug
 
 	return ret;
 }
@@ -309,7 +296,7 @@ HTU21D::get_temperature()
 		return ret;
 	}
 
-	usleep(60000); //TODO check how usleep func work
+	usleep(60000);
 
 	ret = transfer(nullptr, 0, &val[0], 3);
 	if (OK != ret) {
@@ -319,18 +306,18 @@ HTU21D::get_temperature()
 		return ret;
 	}
 
-    tem = (val[0] << 8) + val[1];	//TODO check the expression
-    crc = val[2];
+    tem = (val[0] << 8) + val[1];
+    crc = val[2]; //TODO implement
     debug("i2c::transfer returned %d", crc); //DELETE
 
     // Following constants are taken from the htu21d datasheet
     _temperature = (tem * 175.72) / 65536 - 46.85;
-    //warnx("Temperature = %f", _temperature); //DELETE
+    //warnx("Temperature = %f", _temperature); //DELETE debug
 
 	return ret;
 }
 
-int HTU21D::measure()     //TODO check if the code (::cycle) works with this function
+int HTU21D::measure()
 {
 	int ret;
 
@@ -352,7 +339,6 @@ int
 HTU21D::collect()
 {
 	int ret = ERROR;
-	//printf("\nHTU21D collection starts ...\n"); //DELETE
 
 	if (get_humidity() != OK) {
 			errx(1, "get_humidity() != OK");
@@ -368,15 +354,15 @@ HTU21D::collect()
 	report.humidity_percent = _humidity;
 	report.hum_temperature_celsius = _temperature;
 
-	//TODO check why doensn't it work anymore
-//	if (_humidity_pub != nullptr && !(_pub_blocked)) {
-//		/* publish it */
-//		orb_publish(ORB_ID(humidity), _humidity_pub, &report);
-//		//printf("\nHTU21D published successfully ...\n"); //DELETE
-//	}
-	orb_publish(ORB_ID(humidity), _humidity_pub, &report);
+	if (!(_pub_blocked)) {
+		orb_publish(ORB_ID(humidity), _humidity_pub, &report);
+	}
 
-	//TODO make a proper publishing continuance, check the examples
+	if (!_reports->force(&report))
+		perf_count(_buffer_overflows);
+
+	/* notify anyone waiting for data */
+	poll_notify(POLLIN);
 
 	ret = OK;
 	return ret;
@@ -395,12 +381,11 @@ void HTU21D::cycle()
 {
 	/* collection phase? */
 	if (_collect_phase) {
-
 		/* perform collection */
 		if (OK != collect()) {
 			debug("collection error");
 			/* restart the measurement state machine */
-			start(); //TODO find out how _reports work and implement it everywhere
+			start();
 			_sensor_ok = false;
 			return;
 		}
@@ -421,12 +406,9 @@ void HTU21D::cycle()
 		}
 	}
 
-
 	/* measurement phase */
 	if (OK != measure())
 		debug("measure error");
-
-	//_sensor_ok = (ret == OK); TODO fix
 
 	/* next phase is collection */
 	_collect_phase = true;
@@ -437,7 +419,6 @@ void HTU21D::cycle()
 			(worker_t)&HTU21D::cycle_trampoline,
 			this,
 			USEC2TICK(HTU21D_CONVERSION_INTERVAL));
-
 }
 
 void
@@ -493,7 +474,7 @@ HTU21D::ioctl(struct file *filp, int cmd, unsigned long arg)
 					bool want_start = (_measure_ticks == 0);
 
 					/* set interval for next measurement to minimum legal value */
-					_measure_ticks = USEC2TICK(_cycling_rate);
+					_measure_ticks = USEC2TICK(HTU21D_CONVERSION_INTERVAL);
 
 					/* if we need to start the poll state machine, do it */
 					if (want_start)
@@ -511,7 +492,7 @@ HTU21D::ioctl(struct file *filp, int cmd, unsigned long arg)
 					int ticks = USEC2TICK(1000000 / arg);
 
 					/* check against maximum rate */
-					if (ticks < USEC2TICK(_cycling_rate))
+					if (ticks < USEC2TICK(HTU21D_CONVERSION_INTERVAL))
 						return -EINVAL;
 
 					/* update interval for next measurement */
@@ -672,21 +653,6 @@ start()
 		goto fail;
 	}
 
-
-
-//	usleep(50000); //TODO check how usleep func work
-//	for (int i = 0; i < 100; i++){
-//		usleep(10000); //TODO check how usleep func work
-//		g_dev->get_temperature();
-//		usleep(10000); //TODO check how usleep func work
-//		g_dev->get_humidity();
-//	}
-//
-//
-//	g_dev->get_temperature();
-	//g_dev->cycle();
-
-	//TODO: check, do I need it or not
 	if (ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_DEFAULT) < 0) {
 		errx(1, "SENSORIOCSPOLLRATE, SENSOR_POLLRATE_DEFAULT");
 		goto fail;
@@ -728,61 +694,14 @@ void stop()
 void
 test()
 {
-	struct hum_report report;                              //to-do check it later
-	ssize_t sz;
-	int ret;
-
-	int fd = open(HTU21D_DEVICE_PATH, O_RDONLY);
-
-	if (fd < 0) {
-		err(1, "%s open failed (try 'htu21d start' if the driver is not running", HTU21D_DEVICE_PATH);
-	}
-
-	/* do a simple demand read */
-	sz = read(fd, &report, sizeof(report));
-
-	if (sz != sizeof(report)) {
-		err(1, "immediate read failed");
-	}
-
-	warnx("single read");
-	warnx("time:        %llu", report.timestamp);
-
-	/* start the sensor polling at 2Hz */
-	if (OK != ioctl(fd, SENSORIOCSPOLLRATE, 2)) {
-		errx(1, "failed to set 2Hz poll rate");
-	}
-
-	/* read the sensor 5x and report each value */
-	for (unsigned i = 0; i < 5; i++) {
-		struct pollfd fds;
-
-		/* wait for data to be ready */
-		fds.fd = fd;
-		fds.events = POLLIN;
-		ret = poll(&fds, 1, 2000);
-
-		if (ret != 1) {
-			errx(1, "timed out waiting for sensor data");
+	if (g_dev != nullptr) {
+		if (OK != g_dev->probe()) {
+			errx(1, "test::OK != g_dev->probe()");
 		}
-
-		/* now go get it */
-		sz = read(fd, &report, sizeof(report));
-
-		if (sz != sizeof(report)) {
-			err(1, "periodic read failed");
-		}
-
-		warnx("periodic read %u", i);
-		warnx("time:        %llu", report.timestamp);
 	}
+	errx(1, "Start the driver first");
 
-	/* reset the sensor polling to default rate */
-	if (OK != ioctl(fd, SENSORIOCSPOLLRATE, SENSOR_POLLRATE_DEFAULT)) {
-		errx(1, "failed to set default poll rate");
-	}
-
-	errx(0, "PASS");
+	exit(0);
 }
 
 /**
